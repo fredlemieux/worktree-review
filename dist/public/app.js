@@ -1,6 +1,20 @@
 // Generated from src/ by build.mjs. Edit the TypeScript source, not this file.
 
 // src/web/state.ts
+var ORDER_KEY = "wtr.newestFirst";
+function loadNewestFirst() {
+  try {
+    return localStorage.getItem(ORDER_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+function saveNewestFirst(on) {
+  try {
+    localStorage.setItem(ORDER_KEY, on ? "1" : "0");
+  } catch {
+  }
+}
 var S = {
   st: null,
   selId: null,
@@ -26,6 +40,7 @@ var S = {
   blameOn: /* @__PURE__ */ new Set(),
   fileBlame: /* @__PURE__ */ new Map(),
   reviewBarOpen: /* @__PURE__ */ new Map(),
+  newestFirst: loadNewestFirst(),
   openBodies: /* @__PURE__ */ new Set(),
   removeErrors: {},
   seenJobs: /* @__PURE__ */ new Set(),
@@ -1215,6 +1230,7 @@ async function loadView({ quiet = false } = {}) {
       const gs = diff.commits.map((c) => ({ ...c, files: parseDiff(c.diff).map((f) => ({ ...f, commit: c.sha, commitN: c.n, uid: `${c.sha}~${f.path}` })) }));
       const unc = parseDiff(diff.uncommitted).map((f) => ({ ...f, commit: null, commitN: 0, uncommitted: true, uid: `u~${f.path}` }));
       if (unc.length) gs.push({ n: 0, sha: null, subject: "Uncommitted changes", files: unc });
+      if (S.newestFirst) gs.reverse();
       groups = gs;
       files = gs.flatMap((g) => g.files);
     } else {
@@ -1222,7 +1238,12 @@ async function loadView({ quiet = false } = {}) {
         const ns = (diff.fileCommits?.[p] || []).filter((n) => n > 0);
         return ns.length ? Math.min(...ns) : Infinity;
       };
-      files = parseDiff(diff.diff).map((f) => ({ ...f, commit: null, uid: f.path })).map((f, i) => ({ f, i, k: first(f.path) })).sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.f);
+      const last = (p) => {
+        const ns = diff.fileCommits?.[p] || [];
+        return ns.includes(0) || !ns.length ? -Infinity : -Math.max(...ns);
+      };
+      const key = S.newestFirst ? last : first;
+      files = parseDiff(diff.diff).map((f) => ({ ...f, commit: null, uid: f.path })).map((f, i) => ({ f, i, k: key(f.path) })).sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.f);
     }
     const prev = S.view;
     const v = { wtId: wt.id, diff, files, groups, comments: cm.comments, reviews: cm.reviews, commentSig: wt.comments.sig, crSig: reviewsSig(wt), prSig: prSig(wt), blame: prev?.wtId === wt.id && prev.blame?.fingerprint === diff.fingerprint ? prev.blame : null };
@@ -1481,7 +1502,8 @@ function renderMain() {
           <button data-act="mode" data-mode="commits" class="${byCommit ? "on" : ""}" ${v.diff.commits.length || wt.dirty ? "" : "disabled"} title="Each commit's changes in the order they were made">By commit</button>
           <button data-act="mode" data-mode="since" class="${since ? "on" : ""}" ${v.diff.sinceAvailable ? "" : 'disabled title="Mark as reviewed first"'}>Since last review${v.diff.reviewedAt ? ` (${ago(v.diff.reviewedAt)})` : ""}</button>
         </div>
-        ${byCommit ? `<span class="progress">${v.diff.commits.length} commit${v.diff.commits.length === 1 ? "" : "s"}, oldest first</span>` : `<span class="progress">${viewedCount} / ${v.files.length} files viewed</span>`}
+        ${orderToggleHtml(v)}
+        ${byCommit ? `<span class="progress">${v.diff.commits.length} commit${v.diff.commits.length === 1 ? "" : "s"}</span>` : `<span class="progress">${viewedCount} / ${v.files.length} files viewed</span>`}
       </div>
       <div class="actions">
         ${S.stale ? '<span class="banner">New changes landed. <button class="btn small" data-act="refresh">Refresh</button></span>' : ""}
@@ -1547,6 +1569,11 @@ var otherViewHtml = (otherView, byCommit) => otherView.length ? `<details class=
       <div class="panel-body threads">${otherView.map((c) => `<div class="mono">${esc(c.file)}:${c.line}${c.commit ? ` · ${c.commit.slice(0, 8)}` : ""}</div>${threadHtml(c)}`).join("")}</div></details>` : "";
 var collapseAllHtml = (v) => v.diff.mode === "commits" && (v.groups ?? []).every((g) => S.shutCommits.has(g.n)) ? '<button class="btn" data-act="expand-all">Expand all</button>' : '<button class="btn" data-act="collapse-all">Collapse all</button>';
 var headerSig = (wt) => JSON.stringify([wt.sessions, wt.agents, wt.pr, wt.cleanup, wt.ahead, wt.dirty, wt.baseRef, wt.baseError, wt.error, wt.busy, S.removeErrors[wt.id], st().sessions.length, st().config]);
+function orderToggleHtml(v) {
+  if (!v.diff.commits.length) return "";
+  const btn = (newest, label) => `<button data-act="order" data-newest="${newest}" class="${S.newestFirst === newest ? "on" : ""}" aria-pressed="${S.newestFirst === newest}">${label}</button>`;
+  return `<div class="seg small" role="group" aria-label="Order" title="Which commits, and the files they changed, come first">${btn(false, "Oldest first")}${btn(true, "Newest first")}</div>`;
+}
 function commitsHtml(commits, wt) {
   if (!commits.length && !wt.dirty) return "";
   const byCommit = S.view?.diff.mode === "commits";
@@ -1560,7 +1587,8 @@ ${body}`)}"` : ""}>
       <button class="link-btn" data-act="view-commit" data-n="${n}">view</button></div>`;
   const rows = commits.map((c) => row(c.n, c.sha, c.subject, c.time, c.body));
   if (wt.dirty) rows.push(row(0, null, `Uncommitted changes (${wt.dirty} file${wt.dirty === 1 ? "" : "s"})`, null));
-  return `<details class="panel commits-panel" ${commits.length <= 8 ? "open" : ""}><summary class="panel-head" style="cursor:pointer">${commits.length} commit${commits.length === 1 ? "" : "s"}, oldest first
+  if (S.newestFirst) rows.reverse();
+  return `<details class="panel commits-panel" ${commits.length <= 8 ? "open" : ""}><summary class="panel-head" style="cursor:pointer">${commits.length} commit${commits.length === 1 ? "" : "s"}, ${S.newestFirst ? "newest" : "oldest"} first
       ${S.hl !== null && S.hl !== void 0 && canHl ? '<button class="btn small" data-act="hl-commit" data-n="">Clear highlight</button>' : ""}</summary>
     <div class="panel-body">${rows.join("")}</div></details>`;
 }
@@ -2030,6 +2058,13 @@ var actions = {
       renderMain();
     }
     document.getElementById(`f-${fnv(f.uid)}`)?.scrollIntoView({ block: "start" });
+  },
+  order: (el) => {
+    const newest = el.dataset.newest === "true";
+    if (newest === S.newestFirst) return;
+    S.newestFirst = newest;
+    saveNewestFirst(newest);
+    loadView({ quiet: true });
   },
   mode: (el, e) => {
     e.preventDefault();
