@@ -1238,12 +1238,7 @@ async function loadView({ quiet = false } = {}) {
         const ns = (diff.fileCommits?.[p] || []).filter((n) => n > 0);
         return ns.length ? Math.min(...ns) : Infinity;
       };
-      const last = (p) => {
-        const ns = diff.fileCommits?.[p] || [];
-        return ns.includes(0) || !ns.length ? -Infinity : -Math.max(...ns);
-      };
-      const key = S.newestFirst ? last : first;
-      files = parseDiff(diff.diff).map((f) => ({ ...f, commit: null, uid: f.path })).map((f, i) => ({ f, i, k: key(f.path) })).sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.f);
+      files = parseDiff(diff.diff).map((f) => ({ ...f, commit: null, uid: f.path })).map((f, i) => ({ f, i, k: first(f.path) })).sort((a, b) => a.k - b.k || a.i - b.i).map((x) => x.f);
     }
     const prev = S.view;
     const v = { wtId: wt.id, diff, files, groups, comments: cm.comments, reviews: cm.reviews, commentSig: wt.comments.sig, crSig: reviewsSig(wt), prSig: prSig(wt), blame: prev?.wtId === wt.id && prev.blame?.fingerprint === diff.fingerprint ? prev.blame : null };
@@ -1570,9 +1565,9 @@ var otherViewHtml = (otherView, byCommit) => otherView.length ? `<details class=
 var collapseAllHtml = (v) => v.diff.mode === "commits" && (v.groups ?? []).every((g) => S.shutCommits.has(g.n)) ? '<button class="btn" data-act="expand-all">Expand all</button>' : '<button class="btn" data-act="collapse-all">Collapse all</button>';
 var headerSig = (wt) => JSON.stringify([wt.sessions, wt.agents, wt.pr, wt.cleanup, wt.ahead, wt.dirty, wt.baseRef, wt.baseError, wt.error, wt.busy, S.removeErrors[wt.id], st().sessions.length, st().config]);
 function orderToggleHtml(v) {
-  if (!v.diff.commits.length) return "";
+  if (v.diff.mode !== "commits" || !v.diff.commits.length) return "";
   const btn = (newest, label) => `<button data-act="order" data-newest="${newest}" class="${S.newestFirst === newest ? "on" : ""}" aria-pressed="${S.newestFirst === newest}">${label}</button>`;
-  return `<div class="seg small" role="group" aria-label="Order" title="Which commits, and the files they changed, come first">${btn(false, "Oldest first")}${btn(true, "Newest first")}</div>`;
+  return `<div class="seg small" role="group" aria-label="Order" title="Which commits come first">${btn(false, "Oldest first")}${btn(true, "Newest first")}</div>`;
 }
 function commitsHtml(commits, wt) {
   if (!commits.length && !wt.dirty) return "";
