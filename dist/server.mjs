@@ -953,7 +953,7 @@ var NAME = "worktree-review";
 var SEEN_FRESH = 7 * 864e5;
 var CHECK_EVERY = 864e5;
 var ROOT = path5.dirname(HERE);
-var runningAsPlugin = HERE.startsWith(path5.join(CLAUDE_DIR, "plugins") + path5.sep);
+var USER_WIDE = ["user", "synced"];
 var source = "llanicm/worktree-review";
 var install = null;
 var plugin = () => state.plugin ??= {};
@@ -961,8 +961,8 @@ function pluginSeen() {
   const p = plugin();
   const was = p.seenAt ?? 0;
   p.seenAt = Date.now();
-  p.installed = true;
-  if (Date.now() - was > 36e5) {
+  const firstSinceInstall = !!install?.finishedAt && was < install.finishedAt;
+  if (Date.now() - was > 36e5 || firstSinceInstall) {
     save();
     changed();
   }
@@ -970,8 +970,9 @@ function pluginSeen() {
 function pluginInfo() {
   const p = state.plugin ?? {};
   const seen = !!p.seenAt && Date.now() - p.seenAt < SEEN_FRESH;
-  const status = runningAsPlugin || seen || p.installed === true ? "installed" : p.installed === false ? "missing" : "unknown";
-  return { status, source, dismissed: !!p.dismissedAt, install };
+  const status = p.disabled ? "disabled" : p.installed === true ? "installed" : p.installed === false ? "missing" : seen ? "installed" : "unknown";
+  const done = !!install?.finishedAt && !install.error && (p.seenAt ?? 0) > install.finishedAt;
+  return { status, projectOnly: status === "missing" && !!p.projectOnly, source, dismissed: !!p.dismissedAt, install: done ? null : install };
 }
 async function findSource() {
   try {
@@ -993,7 +994,6 @@ async function findSource() {
 async function checkPlugin(force = false) {
   await findSource();
   const p = plugin();
-  if (runningAsPlugin || p.seenAt && Date.now() - p.seenAt < SEEN_FRESH) return;
   if (!force && p.checkedAt && Date.now() - p.checkedAt < CHECK_EVERY) return;
   let out;
   try {
@@ -1008,7 +1008,11 @@ async function checkPlugin(force = false) {
     list = lastJson(out);
   }
   if (!Array.isArray(list)) return;
-  p.installed = list.some((e) => isRecord(e) && asStr(e.id)?.startsWith(`${NAME}@`) && e.enabled !== false);
+  const mine = list.filter((e) => isRecord(e) && asStr(e.id)?.startsWith(`${NAME}@`)).map(rec);
+  const userWide = mine.filter((e) => USER_WIDE.includes(asStr(e.scope) ?? ""));
+  p.installed = userWide.some((e) => e.enabled !== false);
+  p.disabled = !p.installed && userWide.length > 0;
+  p.projectOnly = !userWide.length && mine.length > 0;
   p.checkedAt = Date.now();
   save();
   changed();
